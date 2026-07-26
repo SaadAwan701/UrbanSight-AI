@@ -1,0 +1,16 @@
+# Virtual Environments
+venv/
+env/
+
+# Deep Learning Weights
+models/*.pt
+models/*.onnx
+
+# Data and Databases
+data/
+*.sqlite3
+*.db
+
+# Python Cache
+__pycache__/
+*.pyc
