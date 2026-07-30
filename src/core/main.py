@@ -2,6 +2,9 @@ import cv2
 from ultralytics import YOLO
 import supervision as sv
 import numpy as np
+import sqlite3
+from datetime import datetime
+import os
 
 model = YOLO("yolov8n.pt")
 
@@ -31,6 +34,25 @@ polygon = np.array([[0, start_y], [width, start_y], [width, height], [0, height]
 zone = sv.PolygonZone(polygon=polygon)
 zone_annotator = sv.PolygonZoneAnnotator(zone=zone, color=sv.Color.RED, thickness=6)
 
+
+os.makedirs("database", exist_ok=True)
+
+# 2. Route the connection into the folder
+conn = sqlite3.connect("database/urbansight_logs.db")
+cursor = conn.cursor()
+
+# Create a table if it doesn't exist yet
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS geofence_alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT,
+        vehicle_id INTEGER
+    )
+""")
+conn.commit()
+# ----------------------
+
+entered_vehicles = set()
 entered_vehicles = set()
 while True:
     success, frame = cap.read()
@@ -48,9 +70,23 @@ while True:
     # 3. Loop through the IDs of those trespassing cars
     for tracker_id in cars_in_zone.tracker_id:
         if tracker_id not in entered_vehicles:
-            # First time seeing this car in the zone!
             entered_vehicles.add(tracker_id)
-            print(f"🚨 ALERT: Vehicle #{tracker_id} entered the restricted zone!")
+
+            # Get exact current time
+            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            # Print to terminal
+            print(f"🚨 ALERT: Vehicle #{tracker_id} entered at {current_time}")
+
+            # Save to database
+            cursor.execute(
+                """
+                INSERT INTO geofence_alerts (timestamp, vehicle_id) 
+                VALUES (?, ?)
+            """,
+                (current_time, tracker_id),
+            )
+            conn.commit()
     # 2. Count how many 'True' values we got
     trespassers = len(detections[zone_mask])
 
@@ -74,4 +110,5 @@ while True:
         break
 
 cap.release()
+conn.close()
 cv2.destroyAllWindows()
