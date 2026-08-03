@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime
 import os
 import sys
+from collections import deque
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 from src.spatial.perspective import PerspectiveTransformer
@@ -109,29 +110,34 @@ while True:
         # 2. Warp that pixel into our flattened bird's-eye map
         warped_x, warped_y = transformer.transform_point(center_x, bottom_y)
 
-        speed_kmh = 0
+        # speed_kmh = 0
+        # 3. Calculate distance over TIME (Smoothing Filter)
+        if tracker_id not in vehicle_history:
+            # Create a queue that only remembers the last 15 coordinates
+            vehicle_history[tracker_id] = {"points": deque(maxlen=15), "speed": 0}
 
-        # 3. Calculate distance if we have seen this car before
-        if tracker_id in vehicle_history:
-            prev_x, prev_y = vehicle_history[tracker_id]
+        # Log current position
+        vehicle_history[tracker_id]["points"].append((warped_x, warped_y))
 
-            # Pythagorean theorem to find distance in meters
+        # Only calculate speed once we have a full 15 frames of data (approx 0.5 seconds)
+        if len(vehicle_history[tracker_id]["points"]) == 15:
+            # Grab the oldest point in memory
+            prev_x, prev_y = vehicle_history[tracker_id]["points"][0]
+
+            # Distance from 15 frames ago to right now
             distance_meters = np.sqrt(
                 (warped_x - prev_x) ** 2 + (warped_y - prev_y) ** 2
             )
 
-            # Time elapsed between one frame (1 / FPS)
-            time_seconds = 1 / fps
+            # Time elapsed over those 15 frames
+            time_seconds = 15 / fps
 
-            # Speed = Distance / Time (Meters per Second)
+            # Calculate and store the smoothed speed
             speed_mps = distance_meters / time_seconds
+            vehicle_history[tracker_id]["speed"] = int(speed_mps * 3.6)
 
-            # Convert to KM/H
-            speed_kmh = int(speed_mps * 3.6)
-
-        # 4. Update the history for the next frame
-        vehicle_history[tracker_id] = (warped_x, warped_y)
-
+        # 4. Retrieve the smoothed speed
+        speed_kmh = vehicle_history[tracker_id]["speed"]
         # 5. Add speed to the label!
         class_name = model.names[class_id]
         labels.append(f"#{tracker_id} {class_name} | {speed_kmh} km/h")
@@ -167,11 +173,6 @@ while True:
     # 3. Print the alert to the terminal
     if trespassers > 0:
         print(f"ALERT: {trespassers} vehicle(s) inside the restricted zone!")
-
-    labels = []
-    for class_id, tracker_id in zip(detections.class_id, detections.tracker_id):
-        class_name = model.names[class_id]
-        labels.append(f"{class_name} #{tracker_id}")
 
     frame = box_annotator.annotate(scene=frame, detections=detections)
     frame = label_annotator.annotate(scene=frame, detections=detections, labels=labels)
