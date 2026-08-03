@@ -5,6 +5,10 @@ import numpy as np
 import sqlite3
 from datetime import datetime
 import os
+import sys
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+from src.spatial.perspective import PerspectiveTransformer
 
 model = YOLO("yolov8n.pt")
 
@@ -12,6 +16,28 @@ tracker = sv.ByteTrack()
 box_annotator = sv.BoxAnnotator()
 label_annotator = sv.LabelAnnotator()
 
+
+# --- SPEED ESTIMATION SETUP ---
+# 1. The 4 corners of the road in the video (Top-Left, Top-Right, Bottom-Right, Bottom-Left)
+SOURCE_POINTS = np.array([[200, 300], [440, 300], [640, 640], [0, 640]])
+
+# 2. What those 4 corners represent in the real world (e.g., 20m wide by 40m long)
+TARGET_WIDTH_METERS = 20
+TARGET_HEIGHT_METERS = 40
+TARGET_POINTS = np.array(
+    [
+        [0, 0],
+        [TARGET_WIDTH_METERS, 0],
+        [TARGET_WIDTH_METERS, TARGET_HEIGHT_METERS],
+        [0, TARGET_HEIGHT_METERS],
+    ]
+)
+
+transformer = PerspectiveTransformer(SOURCE_POINTS, TARGET_POINTS)
+
+# Dictionary to remember where a car was 1 second ago
+vehicle_history = {}
+# ------------------------------
 
 cap = cv2.VideoCapture("src/core/video.mp4")
 if not cap.isOpened():
@@ -62,7 +88,55 @@ while True:
     results = model(frame, conf=0.25, classes=[0, 2], imgsz=640)[0]
     # annotated_frame = results[0].plot()
     detections = sv.Detections.from_ultralytics(results)
+    # ... ByteTrack update line ...
     detections = tracker.update_with_detections(detections)
+
+    # Get the FPS of the video so we know how much time passes between frames
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps == 0:
+        fps = 30  # Fallback just in case
+
+    labels = []
+
+    for bbox, tracker_id, class_id in zip(
+        detections.xyxy, detections.tracker_id, detections.class_id
+    ):
+        # 1. Find the bottom-center point of the bounding box (where the tires hit the road)
+        x1, y1, x2, y2 = bbox
+        center_x = int((x1 + x2) / 2)
+        bottom_y = int(y2)
+
+        # 2. Warp that pixel into our flattened bird's-eye map
+        warped_x, warped_y = transformer.transform_point(center_x, bottom_y)
+
+        speed_kmh = 0
+
+        # 3. Calculate distance if we have seen this car before
+        if tracker_id in vehicle_history:
+            prev_x, prev_y = vehicle_history[tracker_id]
+
+            # Pythagorean theorem to find distance in meters
+            distance_meters = np.sqrt(
+                (warped_x - prev_x) ** 2 + (warped_y - prev_y) ** 2
+            )
+
+            # Time elapsed between one frame (1 / FPS)
+            time_seconds = 1 / fps
+
+            # Speed = Distance / Time (Meters per Second)
+            speed_mps = distance_meters / time_seconds
+
+            # Convert to KM/H
+            speed_kmh = int(speed_mps * 3.6)
+
+        # 4. Update the history for the next frame
+        vehicle_history[tracker_id] = (warped_x, warped_y)
+
+        # 5. Add speed to the label!
+        class_name = model.names[class_id]
+        labels.append(f"#{tracker_id} {class_name} | {speed_kmh} km/h")
+
+    # ... zone mask logic ...
 
     zone_mask = zone.trigger(detections=detections)
     cars_in_zone = detections[zone_mask]
