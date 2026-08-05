@@ -26,7 +26,7 @@ SOURCE_POINTS = np.array([[543, 203], [724, 206], [930, 508], [354, 515]])
 
 # 2 Lanes Wide (7.3m). Adjust the height based on how many dashed lines you captured!
 TARGET_WIDTH_METERS = 7.3
-TARGET_HEIGHT_METERS = 25.0
+TARGET_HEIGHT_METERS = 135.0
 TARGET_POINTS = np.array(
     [
         [0, 0],
@@ -115,36 +115,40 @@ while True:
 
         # speed_kmh = 0
         # 3. Calculate distance over TIME (Smoothing Filter)
+        # 3. Calculate distance over TIME (Smoothing Filter)
         if tracker_id not in vehicle_history:
-            # Create a queue that only remembers the last 15 coordinates
-            vehicle_history[tracker_id] = {"points": deque(maxlen=15), "speed": 0}
+            # INCREASED: We now remember 30 frames (approx 1 full second)
+            vehicle_history[tracker_id] = {"points": deque(maxlen=30), "speed": 0}
 
         # Log current position
         vehicle_history[tracker_id]["points"].append((warped_x, warped_y))
 
-        # Only calculate speed once we have a full 15 frames of data (approx 0.5 seconds)
-        if len(vehicle_history[tracker_id]["points"]) == 15:
-            # Grab the oldest point in memory
-            prev_x, prev_y = vehicle_history[tracker_id]["points"][0]
+        # HORIZON FILTER: Only calculate speed if the car's bottom tires
+        # have crossed down into our reliable, calibrated zone (Y > 220)
+        if bottom_y > 220:
+            if len(vehicle_history[tracker_id]["points"]) == 30:
+                # Grab the oldest point in memory
+                prev_x, prev_y = vehicle_history[tracker_id]["points"][0]
 
-            # Distance from 15 frames ago to right now
-            distance_meters = np.sqrt(
-                (warped_x - prev_x) ** 2 + (warped_y - prev_y) ** 2
-            )
+                distance_meters = np.sqrt(
+                    (warped_x - prev_x) ** 2 + (warped_y - prev_y) ** 2
+                )
 
-            # Time elapsed over those 15 frames
-            time_seconds = 15 / fps
+                # Time elapsed over 29 intervals (for 30 frames)
+                time_seconds = 29 / fps
 
-            # Calculate and store the smoothed speed
-            speed_mps = distance_meters / time_seconds
-            vehicle_history[tracker_id]["speed"] = int(speed_mps * 3.6)
+                speed_mps = distance_meters / time_seconds
+                vehicle_history[tracker_id]["speed"] = int(speed_mps * 3.6)
 
         # 4. Retrieve the smoothed speed
         speed_kmh = vehicle_history[tracker_id]["speed"]
-        # 5. Add speed to the label!
-        class_name = model.names[class_id]
-        labels.append(f"#{tracker_id} {class_name} | {speed_kmh} km/h")
 
+        # 5. Dynamic Labeling (Hide bad math on the horizon)
+        class_name = model.names[class_id]
+        if bottom_y > 220 and speed_kmh > 0:
+            labels.append(f"#{tracker_id} {class_name} | {speed_kmh} km/h")
+        else:
+            labels.append(f"#{tracker_id} {class_name} | Calc...")
     # ... zone mask logic ...
 
     zone_mask = zone.trigger(detections=detections)
