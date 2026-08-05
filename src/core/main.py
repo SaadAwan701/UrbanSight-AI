@@ -20,11 +20,13 @@ label_annotator = sv.LabelAnnotator()
 
 # --- SPEED ESTIMATION SETUP ---
 # 1. The 4 corners of the road in the video (Top-Left, Top-Right, Bottom-Right, Bottom-Left)
-SOURCE_POINTS = np.array([[200, 300], [440, 300], [640, 640], [0, 640]])
+# --- SPEED ESTIMATION SETUP ---
+# Corrected Order: Top-Left, Top-Right, Bottom-Right, Bottom-Left
+SOURCE_POINTS = np.array([[543, 203], [724, 206], [930, 508], [354, 515]])
 
-# 2. What those 4 corners represent in the real world (e.g., 20m wide by 40m long)
-TARGET_WIDTH_METERS = 20
-TARGET_HEIGHT_METERS = 40
+# 2 Lanes Wide (7.3m). Adjust the height based on how many dashed lines you captured!
+TARGET_WIDTH_METERS = 7.3
+TARGET_HEIGHT_METERS = 25.0
 TARGET_POINTS = np.array(
     [
         [0, 0],
@@ -35,6 +37,7 @@ TARGET_POINTS = np.array(
 )
 
 transformer = PerspectiveTransformer(SOURCE_POINTS, TARGET_POINTS)
+# ------------------------------# 2. What those 4 corners represent in the real world (e.g., 20m wide by 40m long)
 
 # Dictionary to remember where a car was 1 second ago
 vehicle_history = {}
